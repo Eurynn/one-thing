@@ -18,19 +18,6 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -62,7 +49,6 @@ export default function Home() {
   const [challengerIndex, setChallengerIndex] = useState(1);
   const [focus, setFocus] = useState('');
   const [backlog, setBacklog] = useState<string[]>([]);
-  const [backlogOpen, setBacklogOpen] = useState(false);
   const [nextAction, setNextAction] = useState('');
   const [minutes, setMinutes] = useState(25);
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
@@ -144,7 +130,6 @@ export default function Home() {
     deadline.current = null;
     setFocus(task);
     setBacklog(savedBacklog);
-    setBacklogOpen(false);
     setNextAction(action);
     setMinutes(duration);
     setSecondsLeft(duration * 60);
@@ -246,7 +231,6 @@ export default function Home() {
     setIncumbent('');
     setFocus('');
     setBacklog([]);
-    setBacklogOpen(false);
     setNextAction('');
     setRunning(false);
     setSecondsLeft(minutes * 60);
@@ -299,7 +283,6 @@ export default function Home() {
     setIncumbent('');
     setFocus('');
     setBacklog([]);
-    setBacklogOpen(false);
     setNextAction('');
     setRunning(false);
     setResumeNote('');
@@ -504,15 +487,15 @@ export default function Home() {
                   </div>
 
                   {backlog.length > 0 && (
-                    <Collapsible open={backlogOpen} onOpenChange={setBacklogOpen} className="mt-4">
-                      <CollapsibleTrigger className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-foreground/15 bg-background/65 px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted/65 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/20">
+                    <details className="group mt-4">
+                      <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-foreground/15 bg-background/65 px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted/65 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/20 [&::-webkit-details-marker]:hidden">
                         <span className="flex items-center gap-2">
                           <Archive className="size-4 text-primary" />
                           其余 {backlog.length} 件已收进稍后
                         </span>
-                        <ChevronDown className={`size-4 shrink-0 transition-transform ${backlogOpen ? 'rotate-180' : ''}`} />
-                      </CollapsibleTrigger>
-                      <CollapsibleContent className="px-2 pt-3">
+                        <ChevronDown className="size-4 shrink-0 transition-transform group-open:rotate-180" />
+                      </summary>
+                      <div className="px-2 pt-3">
                         <ul className="space-y-2" aria-label="稍后处理的事项">
                           {backlog.map((task) => (
                             <li key={task} className="flex items-start gap-2 text-sm leading-6 text-muted-foreground">
@@ -525,8 +508,8 @@ export default function Home() {
                           <CornerUpRight data-icon="inline-start" />
                           带回清单，重新选择
                         </Button>
-                      </CollapsibleContent>
-                    </Collapsible>
+                      </div>
+                    </details>
                   )}
 
                   <div className="mt-6">
@@ -583,7 +566,38 @@ export default function Home() {
                     ))}
                   </div>
 
-                  {interruptedAt && !running && (
+                  {pauseDialogOpen && (
+                    <section className="mt-5 rounded-2xl border-2 border-foreground/70 bg-card p-4 shadow-[6px_6px_0_rgb(239_184_53/55%)]" aria-labelledby="pause-title">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 id="pause-title" className="font-display text-xl font-semibold">给回来后的自己留句话</h3>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">记下做到哪里、下一步是什么。</p>
+                        </div>
+                        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-accent/30 text-primary">
+                          <CornerUpRight className="size-4" />
+                        </span>
+                      </div>
+                      <label htmlFor="pause-note" className="mt-4 block text-sm font-semibold">我停在这里</label>
+                      <Textarea
+                        id="pause-note"
+                        value={pauseDraft}
+                        onChange={(event) => setPauseDraft(event.target.value)}
+                        placeholder={nextAction ? `例如：${nextAction}` : '例如：已列好三个要点，下一步给第二点补一个例子'}
+                        maxLength={200}
+                        className="mt-2 min-h-20 rounded-xl border-foreground/20 bg-background/70 p-3 text-base leading-6 focus-visible:border-primary focus-visible:ring-primary/15"
+                        autoFocus
+                      />
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+                        <span className="text-xs text-muted-foreground">{pauseDraft.length}/200</span>
+                        <div className="flex gap-2">
+                          <Button type="button" variant="ghost" onClick={() => setPauseDialogOpen(false)}>跳过记录</Button>
+                          <Button type="button" onClick={saveInterruption}>保存接回点</Button>
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {interruptedAt && !running && !pauseDialogOpen && (
                     <div className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 p-4" role="status">
                       <div className="flex items-start gap-3">
                         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
@@ -641,35 +655,6 @@ export default function Home() {
         </footer>
       </div>
 
-      <Dialog open={pauseDialogOpen} onOpenChange={setPauseDialogOpen}>
-        <DialogContent className="max-w-md rounded-2xl border-2 border-foreground/80 bg-card p-5 shadow-[10px_10px_0_rgb(239_184_53/75%)] sm:p-6">
-          <DialogHeader>
-            <DialogTitle className="font-display text-2xl font-semibold">给回来后的自己留句话</DialogTitle>
-            <DialogDescription className="text-sm leading-6">
-              记下做到哪里、下一步是什么。回来时不用重新进入状态。
-            </DialogDescription>
-          </DialogHeader>
-          <label htmlFor="pause-note" className="mt-1 text-sm font-semibold">我停在这里</label>
-          <Textarea
-            id="pause-note"
-            value={pauseDraft}
-            onChange={(event) => setPauseDraft(event.target.value)}
-            placeholder={nextAction ? `例如：${nextAction}` : '例如：已经列好三个要点，下一步给第二点补一个例子'}
-            maxLength={200}
-            className="min-h-24 rounded-xl border-foreground/20 bg-background/70 p-3 text-base leading-6 focus-visible:border-primary focus-visible:ring-primary/15"
-            autoFocus
-          />
-          <p className="text-right text-xs text-muted-foreground">{pauseDraft.length}/200</p>
-          <DialogFooter className="-mx-5 -mb-5 px-5 sm:-mx-6 sm:-mb-6 sm:px-6">
-            <Button type="button" variant="ghost" onClick={() => setPauseDialogOpen(false)}>
-              跳过记录
-            </Button>
-            <Button type="button" onClick={saveInterruption}>
-              保存接回点
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }
