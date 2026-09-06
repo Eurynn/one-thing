@@ -4,14 +4,33 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import {
   ArrowRight,
+  Archive,
   Check,
+  ChevronDown,
   Circle,
   Clock3,
+  CornerUpRight,
+  Pause,
+  Play,
   RotateCcw,
   Sparkles,
+  Zap,
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
@@ -25,6 +44,7 @@ const example = [
 ].join('\n');
 
 const durations = [15, 25, 45];
+const allowedDurations = [2, ...durations];
 
 function readTasks(value: string) {
   return value
@@ -41,6 +61,8 @@ export default function Home() {
   const [incumbent, setIncumbent] = useState('');
   const [challengerIndex, setChallengerIndex] = useState(1);
   const [focus, setFocus] = useState('');
+  const [backlog, setBacklog] = useState<string[]>([]);
+  const [backlogOpen, setBacklogOpen] = useState(false);
   const [nextAction, setNextAction] = useState('');
   const [minutes, setMinutes] = useState(25);
   const [secondsLeft, setSecondsLeft] = useState(25 * 60);
@@ -48,6 +70,10 @@ export default function Home() {
   const [error, setError] = useState('');
   const [ready, setReady] = useState(false);
   const [storageAvailable, setStorageAvailable] = useState(true);
+  const [resumeNote, setResumeNote] = useState('');
+  const [pauseDraft, setPauseDraft] = useState('');
+  const [interruptedAt, setInterruptedAt] = useState<number | null>(null);
+  const [pauseDialogOpen, setPauseDialogOpen] = useState(false);
   const deadline = useRef<number | null>(null);
 
   const parsedTasks = useMemo(() => readTasks(raw), [raw]);
@@ -80,9 +106,15 @@ export default function Home() {
         if (typeof saved.raw === 'string') setRaw(saved.raw.slice(0, 500));
         if (typeof saved.focus === 'string' && saved.focus.trim()) {
           setFocus(saved.focus.slice(0, 500));
+          setBacklog(Array.isArray(saved.backlog)
+            ? saved.backlog.filter((item: unknown): item is string => typeof item === 'string').slice(0, 7)
+            : []);
           setNextAction(typeof saved.nextAction === 'string' ? saved.nextAction.slice(0, 200) : '');
+          setResumeNote(typeof saved.resumeNote === 'string' ? saved.resumeNote.slice(0, 200) : '');
+          setInterruptedAt(typeof saved.interruptedAt === 'number' && Number.isFinite(saved.interruptedAt)
+            ? saved.interruptedAt : null);
           setPhase('result');
-          const duration = durations.includes(saved.minutes) ? saved.minutes : 25;
+          const duration = allowedDurations.includes(saved.minutes) ? saved.minutes : 25;
           setMinutes(duration);
           const remaining = typeof saved.secondsLeft === 'number' && Number.isFinite(saved.secondsLeft)
             ? Math.max(0, Math.min(duration * 60, saved.secondsLeft)) : duration * 60;
@@ -102,18 +134,24 @@ export default function Home() {
     if (!ready) return;
     try {
       window.localStorage.setItem('one-thing-focus', JSON.stringify({
-        raw, focus, nextAction, minutes, secondsLeft, deadline: running ? deadline.current : null,
+        version: 2, raw, focus, backlog, nextAction, minutes, secondsLeft,
+        resumeNote, interruptedAt, deadline: running ? deadline.current : null,
       }));
     } catch { setStorageAvailable(false); }
-  }, [ready, raw, focus, nextAction, minutes, secondsLeft, running]);
+  }, [ready, raw, focus, backlog, nextAction, minutes, secondsLeft, resumeNote, interruptedAt, running]);
 
-  const configureFocus = useCallback((task: string, action: string, duration: number) => {
+  const configureFocus = useCallback((task: string, action: string, duration: number, savedBacklog: string[] = []) => {
     deadline.current = null;
     setFocus(task);
+    setBacklog(savedBacklog);
+    setBacklogOpen(false);
     setNextAction(action);
     setMinutes(duration);
     setSecondsLeft(duration * 60);
     setRunning(false);
+    setResumeNote('');
+    setPauseDraft('');
+    setInterruptedAt(null);
     setPhase('result');
     setError('');
   }, []);
@@ -138,7 +176,7 @@ export default function Home() {
           type: 'object', properties: {
             task: { type: 'string', minLength: 1, maxLength: 500 },
             nextAction: { type: 'string', maxLength: 200 },
-            minutes: { type: 'integer', enum: [15, 25, 45] },
+            minutes: { type: 'integer', enum: [2, 15, 25, 45] },
           }, required: ['task', 'nextAction', 'minutes'], additionalProperties: false,
         },
         annotations: { readOnlyHint: false, untrustedContentHint: true },
@@ -148,8 +186,8 @@ export default function Home() {
           if (Object.keys(value).some(key => !['task', 'nextAction', 'minutes'].includes(key)) ||
             typeof value.task !== 'string' || !value.task.trim() || value.task.length > 500 ||
             typeof value.nextAction !== 'string' || value.nextAction.length > 200 ||
-            typeof value.minutes !== 'number' || !durations.includes(value.minutes)) {
-            throw new Error('事项须为 1–500 字，第一步最多 200 字，时长为 15、25 或 45 分钟。');
+            typeof value.minutes !== 'number' || !allowedDurations.includes(value.minutes)) {
+            throw new Error('事项须为 1–500 字，第一步最多 200 字，时长为 2、15、25 或 45 分钟。');
           }
           const task = value.task.trim();
           const action = value.nextAction.trim();
@@ -193,7 +231,7 @@ export default function Home() {
   function choose(selected: string) {
     const isLastChoice = challengerIndex >= tasks.length - 1;
     if (isLastChoice) {
-      configureFocus(selected, '', minutes);
+      configureFocus(selected, '', minutes, tasks.filter((task) => task !== selected));
       return;
     }
 
@@ -207,9 +245,15 @@ export default function Home() {
     setTasks([]);
     setIncumbent('');
     setFocus('');
+    setBacklog([]);
+    setBacklogOpen(false);
     setNextAction('');
     setRunning(false);
     setSecondsLeft(minutes * 60);
+    setResumeNote('');
+    setPauseDraft('');
+    setInterruptedAt(null);
+    setPauseDialogOpen(false);
     setError('');
   }
 
@@ -218,19 +262,49 @@ export default function Home() {
     setMinutes(value);
     setSecondsLeft(value * 60);
     setRunning(false);
+    setResumeNote('');
+    setInterruptedAt(null);
   }
 
-  function toggleTimer() {
-    if (running) {
-      setSecondsLeft(Math.max(0, Math.ceil(((deadline.current ?? Date.now()) - Date.now()) / 1000)));
-      deadline.current = null;
-      setRunning(false);
-    } else {
-      const remaining = secondsLeft === 0 ? minutes * 60 : secondsLeft;
-      deadline.current = Date.now() + remaining * 1000;
-      setSecondsLeft(remaining);
-      setRunning(true);
-    }
+  function startTimer(duration = minutes) {
+    const remaining = duration !== minutes || secondsLeft === 0 ? duration * 60 : secondsLeft;
+    if (duration !== minutes) setMinutes(duration);
+    deadline.current = Date.now() + remaining * 1000;
+    setSecondsLeft(remaining);
+    setInterruptedAt(null);
+    setResumeNote('');
+    setRunning(true);
+  }
+
+  function pauseTimer() {
+    const remaining = Math.max(0, Math.ceil(((deadline.current ?? Date.now()) - Date.now()) / 1000));
+    setSecondsLeft(remaining);
+    deadline.current = null;
+    setRunning(false);
+    setInterruptedAt(Date.now());
+    setPauseDraft('');
+    setPauseDialogOpen(true);
+  }
+
+  function saveInterruption() {
+    setResumeNote(pauseDraft.trim());
+    setPauseDialogOpen(false);
+  }
+
+  function revisitBacklog() {
+    const allTasks = [focus, ...backlog];
+    setRaw(allTasks.join('\n'));
+    setPhase('collect');
+    setTasks([]);
+    setIncumbent('');
+    setFocus('');
+    setBacklog([]);
+    setBacklogOpen(false);
+    setNextAction('');
+    setRunning(false);
+    setResumeNote('');
+    setInterruptedAt(null);
+    deadline.current = null;
   }
 
   const timerText = `${String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:${String(
@@ -429,6 +503,32 @@ export default function Home() {
                     </p>
                   </div>
 
+                  {backlog.length > 0 && (
+                    <Collapsible open={backlogOpen} onOpenChange={setBacklogOpen} className="mt-4">
+                      <CollapsibleTrigger className="flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border border-foreground/15 bg-background/65 px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted/65 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/20">
+                        <span className="flex items-center gap-2">
+                          <Archive className="size-4 text-primary" />
+                          其余 {backlog.length} 件已收进稍后
+                        </span>
+                        <ChevronDown className={`size-4 shrink-0 transition-transform ${backlogOpen ? 'rotate-180' : ''}`} />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent className="px-2 pt-3">
+                        <ul className="space-y-2" aria-label="稍后处理的事项">
+                          {backlog.map((task) => (
+                            <li key={task} className="flex items-start gap-2 text-sm leading-6 text-muted-foreground">
+                              <span className="mt-2.5 size-1.5 shrink-0 rounded-full bg-accent" />
+                              <span>{task}</span>
+                            </li>
+                          ))}
+                        </ul>
+                        <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={revisitBacklog}>
+                          <CornerUpRight data-icon="inline-start" />
+                          带回清单，重新选择
+                        </Button>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  )}
+
                   <div className="mt-6">
                     <label htmlFor="next-action" className="mb-2 block text-sm font-semibold">
                       把它缩小：你能立刻做的第一步是什么？
@@ -441,6 +541,28 @@ export default function Home() {
                       placeholder="例如：打开文档，写下第一句"
                       className="h-12 rounded-xl border-foreground/20 bg-background/65 px-4 text-base focus-visible:border-primary focus-visible:ring-primary/15"
                     />
+                  </div>
+
+                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/70 bg-accent/15 p-3 pl-4">
+                    <div className="flex items-center gap-3">
+                      <span className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-foreground">
+                        <Zap className="size-4 fill-current" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-semibold">还是难开始？</p>
+                        <p className="text-xs text-muted-foreground">先做两分钟，只求启动。</p>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-10 rounded-full border-foreground/20 bg-card px-4"
+                      disabled={running}
+                      onClick={() => startTimer(2)}
+                    >
+                      两分钟启动
+                      <Play data-icon="inline-end" className="fill-current" />
+                    </Button>
                   </div>
 
                   <div className="mt-5 flex flex-wrap items-center gap-2">
@@ -461,6 +583,24 @@ export default function Home() {
                     ))}
                   </div>
 
+                  {interruptedAt && !running && (
+                    <div className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 p-4" role="status">
+                      <div className="flex items-start gap-3">
+                        <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
+                          <CornerUpRight className="size-4" />
+                        </span>
+                        <div className="min-w-0">
+                          <p className="text-xs text-muted-foreground">
+                            {new Date(interruptedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 暂停 · 回来从这里接上
+                          </p>
+                          <p className="mt-1 break-words text-sm font-semibold leading-6">
+                            {resumeNote || nextAction || '回到刚才的第一步，继续两分钟。'}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-foreground/15 bg-background/70 p-3 pl-5">
                     <div className="flex items-center gap-3">
                       <Clock3 className={`size-5 text-primary ${running ? 'animate-pulse' : ''}`} />
@@ -475,9 +615,10 @@ export default function Home() {
                       type="button"
                       size="lg"
                       className="h-11 rounded-full px-5"
-                      onClick={toggleTimer}
+                      onClick={running ? pauseTimer : () => startTimer()}
                     >
-                      {running ? '暂停' : secondsLeft === 0 ? '再来一次' : '开始'}
+                      {running ? <Pause data-icon="inline-start" /> : <Play data-icon="inline-start" className="fill-current" />}
+                      {running ? '暂停' : interruptedAt ? '从这里继续' : secondsLeft === 0 ? '再来一次' : '开始'}
                     </Button>
                   </div>
 
@@ -499,6 +640,37 @@ export default function Home() {
           </span>
         </footer>
       </div>
+
+      <Dialog open={pauseDialogOpen} onOpenChange={setPauseDialogOpen}>
+        <DialogContent className="max-w-md rounded-2xl border-2 border-foreground/80 bg-card p-5 shadow-[10px_10px_0_rgb(239_184_53/75%)] sm:p-6">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl font-semibold">给回来后的自己留句话</DialogTitle>
+            <DialogDescription className="text-sm leading-6">
+              记下做到哪里、下一步是什么。回来时不用重新进入状态。
+            </DialogDescription>
+          </DialogHeader>
+          <label htmlFor="pause-note" className="mt-1 text-sm font-semibold">我停在这里</label>
+          <Textarea
+            id="pause-note"
+            value={pauseDraft}
+            onChange={(event) => setPauseDraft(event.target.value)}
+            placeholder={nextAction ? `例如：${nextAction}` : '例如：已经列好三个要点，下一步给第二点补一个例子'}
+            maxLength={200}
+            className="min-h-24 rounded-xl border-foreground/20 bg-background/70 p-3 text-base leading-6 focus-visible:border-primary focus-visible:ring-primary/15"
+            autoFocus
+          />
+          <p className="text-right text-xs text-muted-foreground">{pauseDraft.length}/200</p>
+          <DialogFooter className="-mx-5 -mb-5 px-5 sm:-mx-6 sm:-mb-6 sm:px-6">
+            <Button type="button" variant="ghost" onClick={() => setPauseDialogOpen(false)}>
+              跳过记录
+            </Button>
+            <Button type="button" onClick={saveInterruption}>
+              保存接回点
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }
+
