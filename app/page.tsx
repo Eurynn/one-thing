@@ -60,10 +60,25 @@ export default function Home() {
   const [pauseDraft, setPauseDraft] = useState('');
   const [interruptedAt, setInterruptedAt] = useState<number | null>(null);
   const [pauseDialogOpen, setPauseDialogOpen] = useState(false);
+  const [completedAt, setCompletedAt] = useState<number | null>(null);
+  const [completedMessage, setCompletedMessage] = useState('');
   const deadline = useRef<number | null>(null);
 
   const parsedTasks = useMemo(() => readTasks(raw), [raw]);
   const challenger = tasks[challengerIndex] ?? '';
+
+  const markComplete = useCallback(() => {
+    if (!focus || completedAt) return;
+    deadline.current = null;
+    setSecondsLeft(0);
+    setRunning(false);
+    setPauseDialogOpen(false);
+    setPauseDraft('');
+    setInterruptedAt(null);
+    setResumeNote('');
+    setCompletedAt(Date.now());
+    setCompletedMessage(nextAction.trim() || '这一步已经完成，做得很好。');
+  }, [completedAt, focus, nextAction]);
 
   useEffect(() => {
     if (!running) return;
@@ -74,6 +89,7 @@ export default function Home() {
       if (left === 0) {
         deadline.current = null;
         setRunning(false);
+        markComplete();
       }
     };
     tick();
@@ -83,7 +99,7 @@ export default function Home() {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [running]);
+  }, [markComplete, running]);
 
   useEffect(() => {
     try {
@@ -99,6 +115,9 @@ export default function Home() {
           setResumeNote(typeof saved.resumeNote === 'string' ? saved.resumeNote.slice(0, 200) : '');
           setInterruptedAt(typeof saved.interruptedAt === 'number' && Number.isFinite(saved.interruptedAt)
             ? saved.interruptedAt : null);
+          setCompletedAt(typeof saved.completedAt === 'number' && Number.isFinite(saved.completedAt)
+            ? saved.completedAt : null);
+          setCompletedMessage(typeof saved.completedMessage === 'string' ? saved.completedMessage.slice(0, 200) : '');
           setPhase('result');
           const duration = allowedDurations.includes(saved.minutes) ? saved.minutes : 25;
           setMinutes(duration);
@@ -120,11 +139,12 @@ export default function Home() {
     if (!ready) return;
     try {
       window.localStorage.setItem('one-thing-focus', JSON.stringify({
-        version: 2, raw, focus, backlog, nextAction, minutes, secondsLeft,
-        resumeNote, interruptedAt, deadline: running ? deadline.current : null,
+        version: 3, raw, focus, backlog, nextAction, minutes, secondsLeft,
+        resumeNote, interruptedAt, completedAt, completedMessage,
+        deadline: running ? deadline.current : null,
       }));
     } catch { setStorageAvailable(false); }
-  }, [ready, raw, focus, backlog, nextAction, minutes, secondsLeft, resumeNote, interruptedAt, running]);
+  }, [ready, raw, focus, backlog, nextAction, minutes, secondsLeft, resumeNote, interruptedAt, completedAt, completedMessage, running]);
 
   const configureFocus = useCallback((task: string, action: string, duration: number, savedBacklog: string[] = []) => {
     deadline.current = null;
@@ -137,6 +157,9 @@ export default function Home() {
     setResumeNote('');
     setPauseDraft('');
     setInterruptedAt(null);
+    setPauseDialogOpen(false);
+    setCompletedAt(null);
+    setCompletedMessage('');
     setPhase('result');
     setError('');
   }, []);
@@ -238,6 +261,8 @@ export default function Home() {
     setPauseDraft('');
     setInterruptedAt(null);
     setPauseDialogOpen(false);
+    setCompletedAt(null);
+    setCompletedMessage('');
     setError('');
   }
 
@@ -248,15 +273,19 @@ export default function Home() {
     setRunning(false);
     setResumeNote('');
     setInterruptedAt(null);
+    setCompletedAt(null);
+    setCompletedMessage('');
   }
 
   function startTimer(duration = minutes) {
     const remaining = duration !== minutes || secondsLeft === 0 ? duration * 60 : secondsLeft;
+    const hasResumeContext = Boolean(interruptedAt || resumeNote);
     if (duration !== minutes) setMinutes(duration);
     deadline.current = Date.now() + remaining * 1000;
     setSecondsLeft(remaining);
     setInterruptedAt(null);
-    setResumeNote('');
+    if (!hasResumeContext) setResumeNote('');
+    setPauseDialogOpen(false);
     setRunning(true);
   }
 
@@ -271,8 +300,12 @@ export default function Home() {
   }
 
   function saveInterruption() {
-    setResumeNote(pauseDraft.trim());
+    setResumeNote(pauseDraft.trim() || nextAction.trim());
     setPauseDialogOpen(false);
+  }
+
+  function takeNext(task: string) {
+    configureFocus(task, '', minutes, backlog.filter((item) => item !== task));
   }
 
   function revisitBacklog() {
@@ -287,6 +320,9 @@ export default function Home() {
     setRunning(false);
     setResumeNote('');
     setInterruptedAt(null);
+    setPauseDialogOpen(false);
+    setCompletedAt(null);
+    setCompletedMessage('');
     deadline.current = null;
   }
 
@@ -369,12 +405,12 @@ export default function Home() {
                   <p className="font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground">
                     {phase === 'collect' && 'Step 01 / Capture'}
                     {phase === 'choose' && 'Step 02 / Decide'}
-                    {phase === 'result' && 'Step 03 / Begin'}
+                    {phase === 'result' && (completedAt ? 'Step 03 / Complete' : 'Step 03 / Begin')}
                   </p>
                   <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight sm:text-3xl" aria-live="polite">
                     {phase === 'collect' && '先把脑子清空'}
                     {phase === 'choose' && '相信第一反应'}
-                    {phase === 'result' && '答案已经很清楚'}
+                    {phase === 'result' && (completedAt ? '这一件完成了' : '答案已经很清楚')}
                   </h2>
                 </div>
                 <span className="grid size-11 shrink-0 place-items-center rounded-full border border-foreground/15 bg-background font-mono text-xs">
@@ -486,7 +522,44 @@ export default function Home() {
                     </p>
                   </div>
 
-                  {backlog.length > 0 && (
+                  {completedAt && (
+                    <section className="mt-4 rounded-2xl border-2 border-primary/25 bg-primary/5 p-5" aria-labelledby="completed-title">
+                      <div className="flex items-start gap-3">
+                        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
+                          <Check className="size-5" />
+                        </span>
+                        <div className="min-w-0">
+                          <h3 id="completed-title" className="font-display text-2xl font-semibold">这一件，完成。</h3>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">{completedMessage}</p>
+                        </div>
+                      </div>
+                      {backlog.length > 0 ? (
+                        <div className="mt-5 border-t border-primary/15 pt-4">
+                          <p className="text-sm font-semibold">下一件可以继续：</p>
+                          <Button
+                            type="button"
+                            size="lg"
+                            className="mt-3 h-auto min-h-12 w-full justify-between rounded-xl px-4 py-3 text-left whitespace-normal"
+                            onClick={() => takeNext(backlog[0])}
+                          >
+                            <span className="pr-3">{backlog[0]}</span>
+                            <ArrowRight data-icon="inline-end" className="shrink-0" />
+                          </Button>
+                          <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={revisitBacklog}>
+                            <CornerUpRight data-icon="inline-start" />
+                            重新比较暂存事项
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button type="button" variant="outline" className="mt-5 rounded-full" onClick={reset}>
+                          再做一组事情
+                          <ArrowRight data-icon="inline-end" />
+                        </Button>
+                      )}
+                    </section>
+                  )}
+
+                  {!completedAt && backlog.length > 0 && (
                     <details className="group mt-4">
                       <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 rounded-xl border border-foreground/15 bg-background/65 px-4 py-3 text-left text-sm font-semibold transition-colors hover:bg-muted/65 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-primary/20 [&::-webkit-details-marker]:hidden">
                         <span className="flex items-center gap-2">
@@ -512,7 +585,7 @@ export default function Home() {
                     </details>
                   )}
 
-                  <div className="mt-6">
+                  {!completedAt && <div className="mt-6">
                     <label htmlFor="next-action" className="mb-2 block text-sm font-semibold">
                       把它缩小：你能立刻做的第一步是什么？
                     </label>
@@ -524,9 +597,9 @@ export default function Home() {
                       placeholder="例如：打开文档，写下第一句"
                       className="h-12 rounded-xl border-foreground/20 bg-background/65 px-4 text-base focus-visible:border-primary focus-visible:ring-primary/15"
                     />
-                  </div>
+                  </div>}
 
-                  <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/70 bg-accent/15 p-3 pl-4">
+                  {!completedAt && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/70 bg-accent/15 p-3 pl-4">
                     <div className="flex items-center gap-3">
                       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-foreground">
                         <Zap className="size-4 fill-current" />
@@ -540,15 +613,15 @@ export default function Home() {
                       type="button"
                       variant="outline"
                       className="h-10 rounded-full border-foreground/20 bg-card px-4"
-                      disabled={running}
+                      disabled={running || pauseDialogOpen}
                       onClick={() => startTimer(2)}
                     >
                       两分钟启动
                       <Play data-icon="inline-end" className="fill-current" />
                     </Button>
-                  </div>
+                  </div>}
 
-                  <div className="mt-5 flex flex-wrap items-center gap-2">
+                  {!completedAt && <div className="mt-5 flex flex-wrap items-center gap-2">
                     <span className="mr-1 text-sm font-medium text-muted-foreground">专注时长</span>
                     {durations.map((value) => (
                       <Button
@@ -558,15 +631,15 @@ export default function Home() {
                         variant={minutes === value ? 'default' : 'outline'}
                         className="h-10 rounded-full px-3 text-sm"
                         aria-pressed={minutes === value}
-                        disabled={running}
+                        disabled={running || pauseDialogOpen}
                         onClick={() => selectDuration(value)}
                       >
                         {value} 分钟
                       </Button>
                     ))}
-                  </div>
+                  </div>}
 
-                  {pauseDialogOpen && (
+                  {!completedAt && pauseDialogOpen && (
                     <section className="mt-5 rounded-2xl border-2 border-foreground/70 bg-card p-4 shadow-[6px_6px_0_rgb(239_184_53/55%)]" aria-labelledby="pause-title">
                       <div className="flex items-start justify-between gap-3">
                         <div>
@@ -597,7 +670,7 @@ export default function Home() {
                     </section>
                   )}
 
-                  {interruptedAt && !running && !pauseDialogOpen && (
+                  {!completedAt && interruptedAt && !running && !pauseDialogOpen && (
                     <div className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 p-4" role="status">
                       <div className="flex items-start gap-3">
                         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
@@ -615,7 +688,7 @@ export default function Home() {
                     </div>
                   )}
 
-                  <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-foreground/15 bg-background/70 p-3 pl-5">
+                  {!completedAt && <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-foreground/15 bg-background/70 p-3 pl-5">
                     <div className="flex items-center gap-3">
                       <Clock3 className={`size-5 text-primary ${running ? 'animate-pulse' : ''}`} />
                       <div>
@@ -630,16 +703,23 @@ export default function Home() {
                       size="lg"
                       className="h-11 rounded-full px-5"
                       onClick={running ? pauseTimer : () => startTimer()}
+                      disabled={pauseDialogOpen}
                     >
                       {running ? <Pause data-icon="inline-start" /> : <Play data-icon="inline-start" className="fill-current" />}
                       {running ? '暂停' : interruptedAt ? '从这里继续' : secondsLeft === 0 ? '再来一次' : '开始'}
                     </Button>
-                  </div>
+                  </div>}
 
-                  <Button type="button" variant="ghost" size="sm" className="mt-4" onClick={reset}>
+                  {!completedAt && <Button type="button" variant="ghost" size="sm" className="mt-4" onClick={reset}>
                     <RotateCcw data-icon="inline-start" />
                     换一组事情
-                  </Button>
+                  </Button>}
+                  {!completedAt && (
+                    <Button type="button" variant="ghost" size="sm" className="mt-2 ml-2 text-primary" onClick={markComplete}>
+                      <Check data-icon="inline-start" />
+                      标记完成
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
