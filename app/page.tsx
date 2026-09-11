@@ -10,8 +10,11 @@ import {
   Circle,
   Clock3,
   CornerUpRight,
+  Inbox,
+  Lightbulb,
   Pause,
   Play,
+  Plus,
   RotateCcw,
   Sparkles,
   Zap,
@@ -22,6 +25,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 
 type Phase = 'collect' | 'choose' | 'result';
+type StuckReason = 'too_big' | 'unclear' | 'low_energy';
 
 const example = [
   '完成季度方案的第一页',
@@ -62,10 +66,34 @@ export default function Home() {
   const [pauseDialogOpen, setPauseDialogOpen] = useState(false);
   const [completedAt, setCompletedAt] = useState<number | null>(null);
   const [completedMessage, setCompletedMessage] = useState('');
+  const [sessionEndedAt, setSessionEndedAt] = useState<number | null>(null);
+  const [stuckOpen, setStuckOpen] = useState(false);
+  const [stuckReason, setStuckReason] = useState<StuckReason | null>(null);
+  const [captureOpen, setCaptureOpen] = useState(false);
+  const [captureDraft, setCaptureDraft] = useState('');
   const deadline = useRef<number | null>(null);
 
   const parsedTasks = useMemo(() => readTasks(raw), [raw]);
   const challenger = tasks[challengerIndex] ?? '';
+  const resumeDisplay = resumeNote || (interruptedAt ? nextAction : '');
+  const stuckSuggestion = useMemo(() => {
+    if (!stuckReason) return '';
+    const shortFocus = focus.length > 48 ? `${focus.slice(0, 48)}…` : focus;
+    if (stuckReason === 'too_big') {
+      return `先打开与“${shortFocus}”有关的材料，只处理第一个看得见的位置。`;
+    }
+    if (stuckReason === 'unclear') {
+      return `写下完成“${shortFocus}”前，最需要回答的一个问题。`;
+    }
+    return `只做两分钟：把“${shortFocus}”需要的东西打开并摆到手边。`;
+  }, [focus, stuckReason]);
+
+  const markSessionEnded = useCallback(() => {
+    deadline.current = null;
+    setSecondsLeft(0);
+    setRunning(false);
+    setSessionEndedAt(Date.now());
+  }, []);
 
   const markComplete = useCallback(() => {
     if (!focus || completedAt) return;
@@ -76,9 +104,13 @@ export default function Home() {
     setPauseDraft('');
     setInterruptedAt(null);
     setResumeNote('');
+    setSessionEndedAt(null);
+    setStuckOpen(false);
+    setCaptureOpen(false);
+    setRaw(backlog.join('\n'));
     setCompletedAt(Date.now());
     setCompletedMessage(nextAction.trim() || '这一步已经完成，做得很好。');
-  }, [completedAt, focus, nextAction]);
+  }, [backlog, completedAt, focus, nextAction]);
 
   useEffect(() => {
     if (!running) return;
@@ -89,7 +121,7 @@ export default function Home() {
       if (left === 0) {
         deadline.current = null;
         setRunning(false);
-        markComplete();
+        markSessionEnded();
       }
     };
     tick();
@@ -99,7 +131,7 @@ export default function Home() {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', tick);
     };
-  }, [markComplete, running]);
+  }, [markSessionEnded, running]);
 
   useEffect(() => {
     try {
@@ -118,16 +150,26 @@ export default function Home() {
           setCompletedAt(typeof saved.completedAt === 'number' && Number.isFinite(saved.completedAt)
             ? saved.completedAt : null);
           setCompletedMessage(typeof saved.completedMessage === 'string' ? saved.completedMessage.slice(0, 200) : '');
+          setSessionEndedAt(typeof saved.sessionEndedAt === 'number' && Number.isFinite(saved.sessionEndedAt)
+            ? saved.sessionEndedAt : null);
+          setPauseDraft(typeof saved.pauseDraft === 'string' ? saved.pauseDraft.slice(0, 200) : '');
+          setPauseDialogOpen(Boolean(saved.pauseDialogOpen));
+          setStuckOpen(Boolean(saved.stuckOpen));
+          setStuckReason(['too_big', 'unclear', 'low_energy'].includes(saved.stuckReason)
+            ? saved.stuckReason as StuckReason : null);
+          setCaptureOpen(Boolean(saved.captureOpen));
+          setCaptureDraft(typeof saved.captureDraft === 'string' ? saved.captureDraft.slice(0, 200) : '');
           setPhase('result');
           const duration = allowedDurations.includes(saved.minutes) ? saved.minutes : 25;
           setMinutes(duration);
           const remaining = typeof saved.secondsLeft === 'number' && Number.isFinite(saved.secondsLeft)
             ? Math.max(0, Math.min(duration * 60, saved.secondsLeft)) : duration * 60;
-          if (typeof saved.deadline === 'number' && Number.isFinite(saved.deadline)) {
+          if (!saved.completedAt && typeof saved.deadline === 'number' && Number.isFinite(saved.deadline)) {
             const left = Math.max(0, Math.min(duration * 60, Math.ceil((saved.deadline - Date.now()) / 1000)));
             setSecondsLeft(left);
             deadline.current = left > 0 ? Date.now() + left * 1000 : null;
             setRunning(left > 0);
+            if (left === 0) setSessionEndedAt(Date.now());
           } else setSecondsLeft(remaining);
         }
       }
@@ -139,12 +181,15 @@ export default function Home() {
     if (!ready) return;
     try {
       window.localStorage.setItem('one-thing-focus', JSON.stringify({
-        version: 3, raw, focus, backlog, nextAction, minutes, secondsLeft,
-        resumeNote, interruptedAt, completedAt, completedMessage,
+        version: 4, raw, focus, backlog, nextAction, minutes, secondsLeft,
+        resumeNote, pauseDraft, pauseDialogOpen, interruptedAt, completedAt, completedMessage,
+        sessionEndedAt, stuckOpen, stuckReason, captureOpen, captureDraft,
         deadline: running ? deadline.current : null,
       }));
     } catch { setStorageAvailable(false); }
-  }, [ready, raw, focus, backlog, nextAction, minutes, secondsLeft, resumeNote, interruptedAt, completedAt, completedMessage, running]);
+  }, [ready, raw, focus, backlog, nextAction, minutes, secondsLeft, resumeNote, pauseDraft,
+    pauseDialogOpen, interruptedAt, completedAt, completedMessage, sessionEndedAt, stuckOpen,
+    stuckReason, captureOpen, captureDraft, running]);
 
   const configureFocus = useCallback((task: string, action: string, duration: number, savedBacklog: string[] = []) => {
     deadline.current = null;
@@ -160,6 +205,11 @@ export default function Home() {
     setPauseDialogOpen(false);
     setCompletedAt(null);
     setCompletedMessage('');
+    setSessionEndedAt(null);
+    setStuckOpen(false);
+    setStuckReason(null);
+    setCaptureOpen(false);
+    setCaptureDraft('');
     setPhase('result');
     setError('');
   }, []);
@@ -224,8 +274,13 @@ export default function Home() {
   });
 
   function begin() {
-    if (parsedTasks.length < 2 || parsedTasks.length > 8) {
-      setError(parsedTasks.length > 8 ? '请缩减到 8 件以内；所有输入都会保留。' : '请写下至少两件不同的事。');
+    if (parsedTasks.length < 1 || parsedTasks.length > 8) {
+      setError(parsedTasks.length > 8 ? '请缩减到 8 件以内；所有输入都会保留。' : '请至少写下一件事。');
+      return;
+    }
+
+    if (parsedTasks.length === 1) {
+      configureFocus(parsedTasks[0], '', minutes);
       return;
     }
 
@@ -249,6 +304,9 @@ export default function Home() {
 
   function reset() {
     deadline.current = null;
+    if (phase === 'result' && focus && !completedAt) {
+      setRaw([focus, ...backlog].join('\n'));
+    }
     setPhase('collect');
     setTasks([]);
     setIncumbent('');
@@ -263,7 +321,17 @@ export default function Home() {
     setPauseDialogOpen(false);
     setCompletedAt(null);
     setCompletedMessage('');
+    setSessionEndedAt(null);
+    setStuckOpen(false);
+    setStuckReason(null);
+    setCaptureOpen(false);
+    setCaptureDraft('');
     setError('');
+  }
+
+  function startFresh() {
+    reset();
+    setRaw('');
   }
 
   function selectDuration(value: number) {
@@ -271,8 +339,7 @@ export default function Home() {
     setMinutes(value);
     setSecondsLeft(value * 60);
     setRunning(false);
-    setResumeNote('');
-    setInterruptedAt(null);
+    setSessionEndedAt(null);
     setCompletedAt(null);
     setCompletedMessage('');
   }
@@ -283,9 +350,10 @@ export default function Home() {
     if (duration !== minutes) setMinutes(duration);
     deadline.current = Date.now() + remaining * 1000;
     setSecondsLeft(remaining);
-    setInterruptedAt(null);
     if (!hasResumeContext) setResumeNote('');
     setPauseDialogOpen(false);
+    setSessionEndedAt(null);
+    setStuckOpen(false);
     setRunning(true);
   }
 
@@ -297,6 +365,9 @@ export default function Home() {
     setInterruptedAt(Date.now());
     setPauseDraft('');
     setPauseDialogOpen(true);
+    setSessionEndedAt(null);
+    setStuckOpen(false);
+    setCaptureOpen(false);
   }
 
   function saveInterruption() {
@@ -304,12 +375,41 @@ export default function Home() {
     setPauseDialogOpen(false);
   }
 
+  function pauseAfterSession() {
+    setSessionEndedAt(null);
+    setInterruptedAt(Date.now());
+    setPauseDraft(resumeNote || nextAction);
+    setPauseDialogOpen(true);
+  }
+
+  function useStuckSuggestion() {
+    if (!stuckSuggestion) return;
+    setNextAction(stuckSuggestion.slice(0, 200));
+    setStuckOpen(false);
+    setStuckReason(null);
+    if (!running) startTimer(2);
+  }
+
+  function captureThought() {
+    const thought = captureDraft.trim();
+    if (!thought || backlog.length >= 7) return;
+    if (thought !== focus && !backlog.includes(thought)) {
+      setBacklog((current) => [...current, thought]);
+    }
+    setCaptureDraft('');
+    setCaptureOpen(false);
+  }
+
   function takeNext(task: string) {
     configureFocus(task, '', minutes, backlog.filter((item) => item !== task));
   }
 
   function revisitBacklog() {
-    const allTasks = [focus, ...backlog];
+    const allTasks = (completedAt ? backlog : [focus, ...backlog]).filter(Boolean);
+    if (allTasks.length === 0) {
+      startFresh();
+      return;
+    }
     setRaw(allTasks.join('\n'));
     setPhase('collect');
     setTasks([]);
@@ -323,6 +423,11 @@ export default function Home() {
     setPauseDialogOpen(false);
     setCompletedAt(null);
     setCompletedMessage('');
+    setSessionEndedAt(null);
+    setStuckOpen(false);
+    setStuckReason(null);
+    setCaptureOpen(false);
+    setCaptureDraft('');
     deadline.current = null;
   }
 
@@ -405,12 +510,12 @@ export default function Home() {
                   <p className="font-mono text-xs uppercase tracking-[0.12em] text-muted-foreground">
                     {phase === 'collect' && 'Step 01 / Capture'}
                     {phase === 'choose' && 'Step 02 / Decide'}
-                    {phase === 'result' && (completedAt ? 'Step 03 / Complete' : 'Step 03 / Begin')}
+                    {phase === 'result' && (completedAt ? 'Step 03 / Complete' : sessionEndedAt ? 'Step 03 / Check in' : 'Step 03 / Begin')}
                   </p>
                   <h2 className="mt-1 font-display text-2xl font-semibold tracking-tight sm:text-3xl" aria-live="polite">
                     {phase === 'collect' && '先把脑子清空'}
                     {phase === 'choose' && '相信第一反应'}
-                    {phase === 'result' && (completedAt ? '这一件完成了' : '答案已经很清楚')}
+                    {phase === 'result' && (completedAt ? '这一件完成了' : sessionEndedAt ? '这一轮结束了' : '答案已经很清楚')}
                   </h2>
                 </div>
                 <span className="grid size-11 shrink-0 place-items-center rounded-full border border-foreground/15 bg-background font-mono text-xs">
@@ -438,7 +543,7 @@ export default function Home() {
                     maxLength={500}
                   />
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
-                    <span>每行一件 · {parsedTasks.length}/8 件</span>
+                    <span>一件直接开始，多件两两选择 · {parsedTasks.length}/8 件</span>
                     <Button
                       type="button"
                       variant="link"
@@ -460,7 +565,7 @@ export default function Home() {
                       onClick={begin}
                       disabled={!ready}
                     >
-                      开始筛选
+                      {parsedTasks.length === 1 ? '开始这一件' : '开始筛选'}
                       <ArrowRight data-icon="inline-end" />
                     </Button>
                   </div>
@@ -551,11 +656,41 @@ export default function Home() {
                           </Button>
                         </div>
                       ) : (
-                        <Button type="button" variant="outline" className="mt-5 rounded-full" onClick={reset}>
+                        <Button type="button" variant="outline" className="mt-5 rounded-full" onClick={startFresh}>
                           再做一组事情
                           <ArrowRight data-icon="inline-end" />
                         </Button>
                       )}
+                    </section>
+                  )}
+
+                  {!completedAt && sessionEndedAt && (
+                    <section className="mt-4 rounded-2xl border-2 border-accent bg-accent/15 p-5" aria-labelledby="session-ended-title">
+                      <div className="flex items-start gap-3">
+                        <span className="grid size-10 shrink-0 place-items-center rounded-full bg-accent text-foreground">
+                          <Clock3 className="size-5" />
+                        </span>
+                        <div>
+                          <h3 id="session-ended-title" className="font-display text-2xl font-semibold">这一轮结束了</h3>
+                          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                            计时结束不代表事情已经完成。看看此刻最合适的下一步。
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-5 grid gap-2 sm:grid-cols-3">
+                        <Button type="button" className="h-auto min-h-11 rounded-xl whitespace-normal" onClick={() => startTimer(minutes === 2 ? 15 : minutes)}>
+                          <Play data-icon="inline-start" className="fill-current" />
+                          {minutes === 2 ? '继续 15 分钟' : `再继续 ${minutes} 分钟`}
+                        </Button>
+                        <Button type="button" variant="outline" className="h-auto min-h-11 rounded-xl whitespace-normal" onClick={pauseAfterSession}>
+                          <CornerUpRight data-icon="inline-start" />
+                          先停在这里
+                        </Button>
+                        <Button type="button" variant="ghost" className="h-auto min-h-11 rounded-xl whitespace-normal" onClick={markComplete}>
+                          <Check data-icon="inline-start" />
+                          任务完成
+                        </Button>
+                      </div>
                     </section>
                   )}
 
@@ -599,7 +734,98 @@ export default function Home() {
                     />
                   </div>}
 
-                  {!completedAt && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/70 bg-accent/15 p-3 pl-4">
+                  {!completedAt && !sessionEndedAt && (
+                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 justify-start rounded-xl border-foreground/15 bg-background/55"
+                        aria-expanded={stuckOpen}
+                        onClick={() => {
+                          setStuckOpen((current) => !current);
+                          setCaptureOpen(false);
+                        }}
+                      >
+                        <Lightbulb data-icon="inline-start" />
+                        我卡住了
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-11 justify-start rounded-xl border-foreground/15 bg-background/55"
+                        aria-expanded={captureOpen}
+                        onClick={() => {
+                          setCaptureOpen((current) => !current);
+                          setStuckOpen(false);
+                        }}
+                      >
+                        <Inbox data-icon="inline-start" />
+                        先记一下
+                      </Button>
+                    </div>
+                  )}
+
+                  {!completedAt && !sessionEndedAt && stuckOpen && (
+                    <section className="mt-3 rounded-2xl border border-primary/20 bg-primary/5 p-4" aria-labelledby="stuck-title">
+                      <h3 id="stuck-title" className="text-sm font-semibold">现在卡在哪里？</h3>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {([
+                          ['too_big', '事情太大'],
+                          ['unclear', '不知道怎么做'],
+                          ['low_energy', '现在没精力'],
+                        ] as const).map(([reason, label]) => (
+                          <Button
+                            key={reason}
+                            type="button"
+                            size="sm"
+                            variant={stuckReason === reason ? 'default' : 'outline'}
+                            className="rounded-full"
+                            onClick={() => setStuckReason(reason)}
+                          >
+                            {label}
+                          </Button>
+                        ))}
+                      </div>
+                      {stuckSuggestion && (
+                        <div className="mt-4 rounded-xl bg-card p-4 shadow-sm">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-primary">先做这个</p>
+                          <p className="mt-2 text-sm font-semibold leading-6">{stuckSuggestion}</p>
+                          <Button type="button" size="sm" className="mt-3 rounded-full" onClick={useStuckSuggestion}>
+                            {running ? '用作当前第一步' : '用这个，启动两分钟'}
+                            {!running && <Play data-icon="inline-end" className="fill-current" />}
+                          </Button>
+                        </div>
+                      )}
+                    </section>
+                  )}
+
+                  {!completedAt && !sessionEndedAt && captureOpen && (
+                    <section className="mt-3 rounded-2xl border border-accent/70 bg-accent/10 p-4" aria-labelledby="capture-title">
+                      <h3 id="capture-title" className="text-sm font-semibold">把突然想到的事收进稍后</h3>
+                      <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                        {backlog.length >= 7 ? '稍后已有 7 件，先处理或重新整理一件。' : '当前计时不会停止。'}
+                      </p>
+                      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                        <Input
+                          value={captureDraft}
+                          maxLength={200}
+                          onChange={(event) => setCaptureDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' && !event.nativeEvent.isComposing) captureThought();
+                          }}
+                          placeholder="例如：下班前回复小林"
+                          className="h-11 rounded-xl border-foreground/20 bg-card px-4 text-base"
+                          aria-label="记下稍后处理的事"
+                        />
+                        <Button type="button" className="h-11 rounded-xl" disabled={!captureDraft.trim() || backlog.length >= 7} onClick={captureThought}>
+                          <Plus data-icon="inline-start" />
+                          {backlog.length >= 7 ? '稍后已满' : '收进稍后'}
+                        </Button>
+                      </div>
+                    </section>
+                  )}
+
+                  {!completedAt && !sessionEndedAt && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-accent/70 bg-accent/15 p-3 pl-4">
                     <div className="flex items-center gap-3">
                       <span className="grid size-9 shrink-0 place-items-center rounded-full bg-accent text-foreground">
                         <Zap className="size-4 fill-current" />
@@ -621,7 +847,7 @@ export default function Home() {
                     </Button>
                   </div>}
 
-                  {!completedAt && <div className="mt-5 flex flex-wrap items-center gap-2">
+                  {!completedAt && !sessionEndedAt && <div className="mt-5 flex flex-wrap items-center gap-2">
                     <span className="mr-1 text-sm font-medium text-muted-foreground">专注时长</span>
                     {durations.map((value) => (
                       <Button
@@ -670,7 +896,7 @@ export default function Home() {
                     </section>
                   )}
 
-                  {!completedAt && interruptedAt && !running && !pauseDialogOpen && (
+                  {!completedAt && !sessionEndedAt && (resumeDisplay || interruptedAt) && !pauseDialogOpen && (
                     <div className="mt-5 rounded-2xl border border-primary/20 bg-primary/5 p-4" role="status">
                       <div className="flex items-start gap-3">
                         <span className="grid size-8 shrink-0 place-items-center rounded-full bg-primary/10 text-primary">
@@ -678,17 +904,20 @@ export default function Home() {
                         </span>
                         <div className="min-w-0">
                           <p className="text-xs text-muted-foreground">
-                            {new Date(interruptedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} 暂停 · 回来从这里接上
+                            {interruptedAt
+                              ? `${new Date(interruptedAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })} · `
+                              : ''}
+                            {running ? '正从接回点继续' : '暂停 · 回来从这里接上'}
                           </p>
                           <p className="mt-1 break-words text-sm font-semibold leading-6">
-                            {resumeNote || nextAction || '回到刚才的第一步，继续两分钟。'}
+                            {resumeDisplay || '回到刚才的第一步，继续两分钟。'}
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
 
-                  {!completedAt && <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-foreground/15 bg-background/70 p-3 pl-5">
+                  {!completedAt && !sessionEndedAt && <div className="mt-6 flex items-center justify-between gap-4 rounded-2xl border border-foreground/15 bg-background/70 p-3 pl-5">
                     <div className="flex items-center gap-3">
                       <Clock3 className={`size-5 text-primary ${running ? 'animate-pulse' : ''}`} />
                       <div>
@@ -710,11 +939,11 @@ export default function Home() {
                     </Button>
                   </div>}
 
-                  {!completedAt && <Button type="button" variant="ghost" size="sm" className="mt-4" onClick={reset}>
+                  {!completedAt && !sessionEndedAt && <Button type="button" variant="ghost" size="sm" className="mt-4" onClick={reset}>
                     <RotateCcw data-icon="inline-start" />
                     换一组事情
                   </Button>}
-                  {!completedAt && (
+                  {!completedAt && !sessionEndedAt && (
                     <Button type="button" variant="ghost" size="sm" className="mt-2 ml-2 text-primary" onClick={markComplete}>
                       <Check data-icon="inline-start" />
                       标记完成
