@@ -2,7 +2,9 @@
 
 👉 [立即使用壹件](https://one-thing-focus.bbk972517.chatgpt.site/)
 
-直接打开网页即可使用，无需下载或安装。
+📦 [下载最新版](https://github.com/Eurynn/one-thing/releases/latest)
+
+普通用户推荐直接打开网页，无需下载或安装。下载版为完整源码，适合本地运行、二次开发或自行部署。
 
 一个帮助你选出今天最想推进的一件事的中文网页工具。
 
